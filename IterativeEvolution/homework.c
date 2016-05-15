@@ -108,12 +108,17 @@ void                 femDiscretePhi1(femDiscrete* mySpace, double xsi, double *p
 void                 femDiscreteDphi1(femDiscrete* mySpace, double xsi, double *dphidxsi);
 double               femDiscreteInterpolate(double *phi, double *U, int *map, int n);
 
-// .h du femsolver // TODO
+femSolver 			*femSolverCreate(int size);
+void 				 femSolverFree(femSolver *mySolver);
+void				 femSolverInit(femSolver *mySolver);
+void 				 femSolverAssemble(femSolver *mySolver, double *Aloc, double *Bloc, double *Uloc, int *map, int nLoc);
+void 				 femSolverConstrain(femSolver *mySolver, int myNode, double myValue);
+double 				*femSolverEliminate(femSolver *mySolver);
+int 				 femSolverConverged(femSolver *mySolver);
 
 void                 femError(char *text, int line, char *file);
 void                 femWarning(char *text, int line, char *file);
 
-// Mes fonctions
 femTsunami          *femTsunamiCreate(const char *meshFileName, double dt);
 void 					   femTsunamiInit(femTsunami *myTsunami);
 void                 femTsunamiCompute(femTsunami* myTsunami);
@@ -162,7 +167,7 @@ femTsunami *femTsunamiCreate(const char *meshFileName, double dt){
 	myTsunami->edges = femEdgesCreate(myTsunami->mesh);
 	myTsunami->rule1d = femIntegrationCreate(2, FEM_EDGE);
 	myTsunami->rule2d = femIntegrationCreate(3, FEM_TRIANGLE);
-	myTsunami->solver = femSolverFullCreate(9);
+	myTsunami->solver = femSolverCreate(9);
 	myTsunami->space = femDiscreteCreate(3, FEM_TRIANGLE);
 
 	int size = myTsunami->mesh->nElem * 3 + 1;
@@ -432,7 +437,7 @@ void femTsunamiMultiplyInverseMatrix(femTsunami *myProblem)
                  
         femSolverAssemble(theSolver,Aloc,&BE[mapElem[0]],Uloc,mapE,theSpace->n); 
         femSolverAssemble(theSolver,Aloc,&BU[mapElem[0]],Uloc,mapU,theSpace->n); 
-        femSolverAssemble(theSolver,Aloc,&BV[mapElem[0]],Uloc,mapV,theSpace->n);     
+        femSolverAssemble(theSolver,Aloc,&BV[mapElem[0]],Uloc,mapV,theSpace->n);   
         double *soluce = femSolverEliminate(theSolver);
      	for (i = 0; i < n; i++) {
         	BE[mapElem[i]] = soluce[i];
@@ -795,21 +800,54 @@ void femSolverAssemble(femSolver *mySolver, double *Aloc, double *Bloc, double *
 		for(i=0;i<nLoc;++i){
 			myRow = map[i];
 			for(j=0;j<nLoc;j++){
-				int mycol = map[j];
-				mySolver->D0[myRow] += Alco[i*nLoc+j] * mySolver->D[myCol];
+				int myCol = map[j];
+				mySolver->D0[myRow] += Aloc[i*nLoc+j] * mySolver->D[myCol];
 			}
 		}
 	}
 }
 
-void femSovlerConstrain(femSolver *mySolver, int myNode, double myValue){
+void femSolverConstrain(femSolver *mySolver, int myNode, double myValue){
 	mySolver->R[myNode] = myValue;
 	mySolver->D0[myNode] = myValue;
 	mySolver->D[myNode] = myValue;
 }
 
 double *femSolverEliminate(femSolver *mySolver){
+	mySolver->iter++;
+	double error = 0.0; int i;
+	double denAlpha = 0.0;
+	for(i=0;i<mySolver->size;i++){
+		error += (mySolver->R[i])*(mySolver->R[i]);
+		denAlpha += (mySolver->D[i])*(mySolver->D0[i]);
+	}
+	double alpha = error / denAlpha;
 
+	if(mySolver->iter == 1){
+		for(i=0;i<mySolver->size;++i)
+			mySolver->R0[i] = 0.0;
+	}else{
+		double numBeta = 0.0;
+		for(i=0;i<mySolver->size;++i){
+			mySolver->R0[i] = alpha * mySolver->D[i];
+			mySolver->R[i] = mySolver->R[i] - alpha * mySolver->D0[i];
+			numBeta += (mySolver->R[i])*(mySolver->R[i]);
+		}
+		double beta = numBeta / error;
+		for(i=0;i<mySolver->size;++i){
+			mySolver->D0[i] = 0.0;
+			mySolver->D[i] = mySolver->R[i] +  beta * mySolver->D[i];
+		}
+	}
+	mySolver->error = sqrt(error);
+	return(mySolver->R0);
+}
+
+int femSolverConverged(femSolver *mySolver){
+	int testConvergence = 0;
+	if(mySolver->iter > 3000) testConvergence = -1;
+	if(mySolver->error > 10.0e-6) testConvergence = 1;
+	return(testConvergence);
 }
 
 ////// ERROR //////
